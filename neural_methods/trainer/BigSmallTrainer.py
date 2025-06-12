@@ -354,7 +354,7 @@ class BigSmallTrainer(BaseTrainer):
 
 
 
-    def test(self, data_loader):
+    def test_pth(self, data_loader):
         """ Model evaluation on the testing dataset."""
 
         print("===Testing===")

@@ -83,7 +83,22 @@ class FactorizePhysTrainer(BaseTrainer):
             self.scheduler = torch.optim.lr_scheduler.OneCycleLR(
                 self.optimizer, max_lr=self.config.TRAIN.LR, epochs=self.config.TRAIN.EPOCHS, steps_per_epoch=self.num_train_batches)
         elif self.config.TOOLBOX_MODE == "only_test":
-            pass
+            model_path = config.INFERENCE.MODEL_PATH
+            paths = model_path.split('/')
+            model_name = paths[-1].replace('.pth', '')
+            parent_dir = '/'.join(paths[:-1])
+            self.onnx_path = os.path.join(parent_dir, "onnx", model_name + '.onnx')
+            
+            self.onnx_config = {
+                "opset_version": 11,
+                "input_names": ["video_input"],
+                "output_names": ["pred_ppg", "vox_embed"],
+                "dynamic_axes": {
+                    "video_input": {0: "batch_size"},
+                    "pred_ppg": {0: "batch_size"},
+                    "vox_embed": {0: "batch_size"},
+                }
+            }
         else:
             raise ValueError("FactorizePhys trainer initialized in incorrect toolbox mode!")
 
@@ -227,7 +242,7 @@ class FactorizePhysTrainer(BaseTrainer):
             valid_loss = np.asarray(valid_loss)
         return np.mean(valid_loss)
 
-    def test(self, data_loader):
+    def test_pth(self, data_loader):
         """ Runs the model on test sets."""
         if data_loader["test"] is None:
             raise ValueError("No data for test")
@@ -269,8 +284,10 @@ class FactorizePhysTrainer(BaseTrainer):
                     labels_test = labels_test[..., 0]     # Compatibility wigth multi-signal labelled data
                 labels_test = (labels_test - torch.mean(labels_test)) / torch.std(labels_test)  # normalize
 
+                print("data shape: ", data.shape)
                 last_frame = torch.unsqueeze(data[:, :, -1, :, :], 2).repeat(1, 1, max(self.num_of_gpu, 1), 1, 1)
                 data = torch.cat((data, last_frame), 2)
+                print("data shape after concat last frame: ", data.shape)
 
                 # last_sample = torch.unsqueeze(labels_test[-1, :], 0).repeat(max(self.num_of_gpu, 1), 1)
                 # labels_test = torch.cat((labels_test, last_sample), 0)
@@ -282,6 +299,8 @@ class FactorizePhysTrainer(BaseTrainer):
                     pred_ppg_test, vox_embed, factorized_embed, appx_error = self.model(data)
                 else:
                     pred_ppg_test, vox_embed = self.model(data)
+                    print("pred_ppg_test shape: ", pred_ppg_test.shape)
+                    print("vox_embed shape: ", vox_embed.shape)
                 pred_ppg_test = (pred_ppg_test - torch.mean(pred_ppg_test)) / torch.std(pred_ppg_test)  # normalize
 
                 if self.config.TEST.OUTPUT_SAVE_DIR:
@@ -303,6 +322,52 @@ class FactorizePhysTrainer(BaseTrainer):
         if self.config.TEST.OUTPUT_SAVE_DIR: # saving test outputs 
             self.save_test_outputs(predictions, labels, self.config)
 
+    def test_onnx_batch(self, test_batch, ort_session, predictions, labels):
+        batch_size = test_batch[0].shape[0]
+        data, labels_test = test_batch[0].to(self.device), test_batch[1].to(self.device)
+
+        if len(labels_test.shape) > 2:
+            labels_test = labels_test[..., 0]     # Compatibility wigth multi-signal labelled data
+        labels_test = (labels_test - torch.mean(labels_test)) / torch.std(labels_test)  # normalize
+
+        last_frame = torch.unsqueeze(data[:, :, -1, :, :], 2).repeat(1, 1, max(self.num_of_gpu, 1), 1, 1)
+        data = torch.cat((data, last_frame), 2)
+        
+        # Run ONNX inference - returns multiple outputs
+        ort_inputs = {ort_session.get_inputs()[0].name: data.cpu().numpy()}
+        ort_outputs = ort_session.run(None, ort_inputs)
+        pred_ppg_test = torch.from_numpy(ort_outputs[0])
+        
+        pred_ppg_test = (pred_ppg_test - torch.mean(pred_ppg_test)) / torch.std(pred_ppg_test)  # normalize
+
+        if self.config.TEST.OUTPUT_SAVE_DIR:
+            labels_test = labels_test.cpu()
+            pred_ppg_test = pred_ppg_test.cpu()
+
+        for idx in range(batch_size):
+            subj_index = test_batch[2][idx]
+            sort_index = int(test_batch[3][idx])
+            if subj_index not in predictions.keys():
+                predictions[subj_index] = dict()
+                labels[subj_index] = dict()
+            predictions[subj_index][sort_index] = pred_ppg_test[idx]
+            labels[subj_index][sort_index] = labels_test[idx]
+
+    def get_dummy_input(self):
+        dummy_input = torch.randn(
+            self.num_of_gpu, # batch size (arbitrary, can be adjusted) 
+            3, # channels (RGB)
+            self.config.TEST.DATA.PREPROCESS.CHUNK_LENGTH,
+            self.config.TEST.DATA.PREPROCESS.RESIZE.H,
+            self.config.TEST.DATA.PREPROCESS.RESIZE.W
+        ).to(self.device)
+        
+        last_frame = torch.unsqueeze(dummy_input[:, :, -1, :, :], 2).repeat(1, 1, max(self.num_of_gpu, 1), 1, 1)
+        dummy_input = torch.cat((dummy_input, last_frame), 2)
+        print("data shape after concat last frame: ", dummy_input.shape)
+        
+        return dummy_input
+    
     def save_model(self, index):
         if not os.path.exists(self.model_dir):
             os.makedirs(self.model_dir)

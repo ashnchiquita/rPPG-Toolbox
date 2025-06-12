@@ -71,6 +71,25 @@ class PhysFormerTrainer(BaseTrainer):
                 patches=(self.patch_size,) * 3, dim=self.dim, ff_dim=self.ff_dim, num_heads=self.num_heads, num_layers=self.num_layers, 
                 dropout_rate=self.dropout_rate, theta=self.theta).to(self.device)
             self.model = torch.nn.DataParallel(self.model, device_ids=list(range(config.NUM_OF_GPU_TRAIN)))
+            
+            model_path = config.INFERENCE.MODEL_PATH
+            paths = model_path.split('/')
+            model_name = paths[-1].replace('.pth', '')
+            parent_dir = '/'.join(paths[:-1])
+            self.onnx_path = os.path.join(parent_dir, "onnx", model_name + '.onnx')
+            
+            self.onnx_config = {
+                "opset_version": 11,
+                "input_names": ["video_input", "gra_sharp"],
+                "output_names": ["pred_ppg", "output2", "output3", "output4"],
+                "dynamic_axes": {
+                    "video_input": {0: "batch_size"},
+                    "pred_ppg": {0: "batch_size"},
+                    "output2": {0: "batch_size"},
+                    "output3": {0: "batch_size"},
+                    "output4": {0: "batch_size"}
+                }
+            }
         else:
             raise ValueError("Physformer trainer initialized in incorrect toolbox mode!")
 
@@ -201,7 +220,7 @@ class PhysFormerTrainer(BaseTrainer):
             RMSE = np.mean([(i-j)**2 for i, j in hrs])**0.5
         return RMSE
 
-    def test(self, data_loader):
+    def test_pth(self, data_loader):
         """ Runs the model on test sets."""
         if data_loader["test"] is None:
             raise ValueError("No data for test")
@@ -244,6 +263,7 @@ class PhysFormerTrainer(BaseTrainer):
                 data, label = test_batch[0].to(
                     self.config.DEVICE), test_batch[1].to(self.config.DEVICE)
                 gra_sharp = 2.0
+                print(f"Processing batch size: {batch_size}, data shape: {data.shape}, label shape: {label.shape}")
                 pred_ppg_test, _, _, _ = self.model(data, gra_sharp)
                 for idx in range(batch_size):
                     subj_index = test_batch[2][idx]
@@ -259,6 +279,39 @@ class PhysFormerTrainer(BaseTrainer):
         if self.config.TEST.OUTPUT_SAVE_DIR: # saving test outputs
             self.save_test_outputs(predictions, labels, self.config)
 
+    def test_onnx_batch(self, test_batch, ort_session, predictions, labels):
+        batch_size = test_batch[0].shape[0]
+        data, label = test_batch[0].to(
+            self.config.DEVICE), test_batch[1].to(self.config.DEVICE)
+        gra_sharp = 2.0
+        ort_inputs = {
+            "video_input": data.cpu().numpy(),
+            "gra_sharp": np.array([gra_sharp], dtype=np.float32)
+        }
+        
+        # Run ONNX inference
+        ort_outputs = ort_session.run(None, ort_inputs)
+        pred_ppg_test = torch.from_numpy(ort_outputs[0]).to(self.config.DEVICE)
+        for idx in range(batch_size):
+            subj_index = test_batch[2][idx]
+            sort_index = int(test_batch[3][idx])
+            if subj_index not in predictions.keys():
+                predictions[subj_index] = dict()
+                labels[subj_index] = dict()
+            predictions[subj_index][sort_index] = pred_ppg_test[idx]
+            labels[subj_index][sort_index] = label[idx]
+            
+    def get_dummy_input(self):
+        video_input = torch.randn(
+            4, # batch size (arbitrary, can be adjusted) 
+            3, # channels (RGB)
+            self.config.TEST.DATA.PREPROCESS.CHUNK_LENGTH,
+            self.config.TEST.DATA.PREPROCESS.RESIZE.H,
+            self.config.TEST.DATA.PREPROCESS.RESIZE.W
+        ).to(self.device)
+        gra_sharp = torch.tensor([2.0], dtype=torch.float32).to(self.device)
+        return (video_input, gra_sharp)
+    
     def save_model(self, index):
         if not os.path.exists(self.model_dir):
             os.makedirs(self.model_dir)

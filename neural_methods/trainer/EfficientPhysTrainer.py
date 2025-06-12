@@ -48,6 +48,22 @@ class EfficientPhysTrainer(BaseTrainer):
             self.model = EfficientPhys(frame_depth=self.frame_depth, img_size=config.TEST.DATA.PREPROCESS.RESIZE.H).to(
                 self.device)
             self.model = torch.nn.DataParallel(self.model, device_ids=list(range(config.NUM_OF_GPU_TRAIN)))
+            
+            model_path = config.INFERENCE.MODEL_PATH
+            paths = model_path.split('/')
+            model_name = paths[-1].replace('.pth', '')
+            parent_dir = '/'.join(paths[:-1])
+            self.onnx_path = os.path.join(parent_dir, "onnx", model_name + '.onnx')
+            
+            self.onnx_config = {
+                "opset_version": 11,
+                "input_names": ["input"],
+                "output_names": ["output"],
+                "dynamic_axes": {
+                    "input": {0: "batch_size"},
+                    "output": {0: "batch_size"}
+                }
+            }
         else:
             raise ValueError("EfficientPhys trainer initialized in incorrect toolbox mode!")
 
@@ -150,7 +166,7 @@ class EfficientPhysTrainer(BaseTrainer):
             valid_loss = np.asarray(valid_loss)
         return np.mean(valid_loss)
 
-    def test(self, data_loader):
+    def test_pth(self, data_loader):
         """ Model evaluation on the testing dataset."""
         if data_loader["test"] is None:
             raise ValueError("No data for test")
@@ -199,6 +215,7 @@ class EfficientPhysTrainer(BaseTrainer):
                 last_frame = torch.unsqueeze(data_test[-1, :, :, :], 0).repeat(self.num_of_gpu, 1, 1, 1)
                 data_test = torch.cat((data_test, last_frame), 0)
                 labels_test = labels_test[:(N * D) // self.base_len * self.base_len]
+                print(f"Testing batch size: {batch_size}, data shape: {data_test.shape}, labels shape: {labels_test.shape}")
                 pred_ppg_test = self.model(data_test)
 
                 if self.config.TEST.OUTPUT_SAVE_DIR:
@@ -219,6 +236,51 @@ class EfficientPhysTrainer(BaseTrainer):
         if self.config.TEST.OUTPUT_SAVE_DIR: # saving test outputs
             self.save_test_outputs(predictions, labels, self.config)
 
+    def test_onnx_batch(self, test_batch, ort_session, predictions, labels):
+        batch_size = test_batch[0].shape[0]
+        data_test, labels_test = test_batch[0].to(
+            self.config.DEVICE), test_batch[1].to(self.config.DEVICE)
+        N, D, C, H, W = data_test.shape
+        data_test = data_test.view(N * D, C, H, W)
+        labels_test = labels_test.view(-1, 1)
+        data_test = data_test[:(N * D) // self.base_len * self.base_len]
+        # Add one more frame for EfficientPhys since it does torch.diff for the input
+        last_frame = torch.unsqueeze(data_test[-1, :, :, :], 0).repeat(self.num_of_gpu, 1, 1, 1)
+        data_test = torch.cat((data_test, last_frame), 0)
+        labels_test = labels_test[:(N * D) // self.base_len * self.base_len]
+        
+        # Run ONNX inference
+        ort_inputs = {ort_session.get_inputs()[0].name: data_test.cpu().numpy()}
+        ort_outputs = ort_session.run(None, ort_inputs)
+        pred_ppg_test = torch.from_numpy(ort_outputs[0])
+
+        if self.config.TEST.OUTPUT_SAVE_DIR:
+            labels_test = labels_test.cpu()
+            pred_ppg_test = pred_ppg_test.cpu()
+
+        for idx in range(batch_size):
+            subj_index = test_batch[2][idx]
+            sort_index = int(test_batch[3][idx])
+            if subj_index not in predictions.keys():
+                predictions[subj_index] = dict()
+                labels[subj_index] = dict()
+            predictions[subj_index][sort_index] = pred_ppg_test[idx * self.chunk_len:(idx + 1) * self.chunk_len]
+            labels[subj_index][sort_index] = labels_test[idx * self.chunk_len:(idx + 1) * self.chunk_len]
+    
+    def get_dummy_input(self):
+        dummy_input = torch.randn(
+            self.base_len,
+            3,
+            self.config.TEST.DATA.PREPROCESS.RESIZE.H,
+            self.config.TEST.DATA.PREPROCESS.RESIZE.W
+        ).to(self.device)
+        
+        # Add the extra frame that EfficientPhys requires
+        last_frame = torch.unsqueeze(dummy_input[-1, :, :, :], 0).repeat(self.num_of_gpu, 1, 1, 1)
+        dummy_input = torch.cat((dummy_input, last_frame), 0)
+        
+        return dummy_input
+        
     def save_model(self, index):
         if not os.path.exists(self.model_dir):
             os.makedirs(self.model_dir)

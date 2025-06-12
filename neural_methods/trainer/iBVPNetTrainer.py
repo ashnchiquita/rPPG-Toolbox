@@ -148,7 +148,7 @@ class iBVPNetTrainer(BaseTrainer):
             valid_loss = np.asarray(valid_loss)
         return np.mean(valid_loss)
 
-    def test(self, data_loader):
+    def test_pth(self, data_loader):
         """ Runs the model on test sets."""
         if data_loader["test"] is None:
             raise ValueError("No data for test")

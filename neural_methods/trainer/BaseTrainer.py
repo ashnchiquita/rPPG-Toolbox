@@ -4,7 +4,10 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import ScalarFormatter, MaxNLocator
 import os
 import pickle
-
+import onnx
+import onnxruntime as ort
+from tqdm import tqdm
+from evaluation.metrics import calculate_metrics
 
 class BaseTrainer:
     @staticmethod
@@ -23,8 +26,106 @@ class BaseTrainer:
     def valid(self, data_loader):
         pass
 
-    def test(self):
-        pass
+    def test_pth(self, data_loader):
+        raise NotImplementedError("test_pth method must be implemented in the subclass")
+    
+    def test_onnx_batch(self, test_batch, ort_session, predictions, labels):
+        raise NotImplementedError("test_onnx_batch method must be implemented in the subclass")
+    
+    def test_onnx(self, data_loader):
+        """Model evaluation using ONNX runtime."""
+        if data_loader["test"] is None:
+            raise ValueError("No data for test")
+
+        print('')
+        print("===Testing with ONNX===")
+
+        # Change chunk length to be test chunk length
+        self.chunk_len = self.config.TEST.DATA.PREPROCESS.CHUNK_LENGTH
+
+        # Check if ONNX model exists, if not export it
+        if not os.path.exists(self.onnx_path):
+            print(f"ONNX model not found at {self.onnx_path}, exporting...")
+            self.export_to_onnx()
+
+        # Create ONNX Runtime session
+        available_providers = ort.get_available_providers()
+        print(f"Available ONNX providers: {available_providers}")
+        
+        # Select providers based on availability and device configuration
+        if 'CUDAExecutionProvider' in available_providers:
+            providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+            print("Using GPU acceleration for ONNX inference")
+        else:
+            providers = ['CPUExecutionProvider']
+            print("Using CPU for ONNX inference")
+        
+        print(f"Selected ONNX providers: {providers}")
+        ort_session = ort.InferenceSession(self.onnx_path, providers=providers)
+        
+        print(f"Testing uses ONNX model: {self.onnx_path}")
+        print("Running model evaluation on the testing dataset using ONNX!")
+        
+        predictions = dict()
+        labels = dict()
+        
+        with torch.no_grad():
+            for _, test_batch in enumerate(tqdm(data_loader["test"], ncols=80)):
+                self.test_onnx_batch(test_batch, ort_session, predictions, labels)
+                
+        calculate_metrics(predictions, labels, self.config)
+    
+    def test(self, data_loader):
+        # self.test_pth(data_loader)
+        self.test_onnx(data_loader)
+    
+    def get_dummy_input(self):
+        raise NotImplementedError("get_dummy_input method must be implemented in the subclass")
+        
+    def export_to_onnx(self):
+        """Export the trained model to ONNX format."""
+        model_path = self.config.INFERENCE.MODEL_PATH
+        
+        if model_path and os.path.exists(model_path):
+            print(f"Loading model weights from: {model_path}")
+            self.model.load_state_dict(torch.load(model_path, map_location=self.device), strict=False)
+            self.model.eval()
+        else:
+            raise ValueError(f"Model file not found: {model_path}")   
+        
+        dummy_input = self.get_dummy_input()
+        if isinstance(dummy_input, torch.Tensor):
+            print(f"Dummy input shape: {dummy_input.shape}")
+        elif isinstance(dummy_input, (list, tuple)):
+            print(f"Dummy input shapes: {[x.shape for x in dummy_input if isinstance(x, torch.Tensor)]}")
+
+        model_to_export = self.model.module if isinstance(self.model, torch.nn.DataParallel) else self.model
+        
+        # Export to ONNX
+        torch.onnx.export(
+            model_to_export,
+            dummy_input,
+            self.onnx_path,
+            export_params=True,
+            opset_version=self.onnx_config["opset_version"],
+            do_constant_folding=True,
+            input_names=self.onnx_config["input_names"],
+            output_names= self.onnx_config["output_names"],
+            dynamic_axes=self.onnx_config["dynamic_axes"],
+        )
+        
+        print(f'Model exported to ONNX: {self.onnx_path}')
+        
+        # Verify the ONNX model
+        try:
+            onnx_model = onnx.load(self.onnx_path)
+            onnx.checker.check_model(onnx_model)
+            print('ONNX model verified successfully')
+        except Exception as e:
+            print(f'ONNX model verification warning: {e}')
+        
+        return self.onnx_path
+
 
     def save_test_outputs(self, predictions, labels, config):
     

@@ -40,6 +40,22 @@ class RhythmFormerTrainer(BaseTrainer):
         elif config.TOOLBOX_MODE == "only_test":
             self.model = RhythmFormer().to(self.device)
             self.model = torch.nn.DataParallel(self.model, device_ids=list(range(config.NUM_OF_GPU_TRAIN)))
+            
+            model_path = config.INFERENCE.MODEL_PATH
+            paths = model_path.split('/')
+            model_name = paths[-1].replace('.pth', '')
+            parent_dir = '/'.join(paths[:-1])
+            self.onnx_path = os.path.join(parent_dir, "onnx", model_name + '.onnx')
+            
+            self.onnx_config = {
+                "opset_version": 12,
+                "input_names": ["input"],
+                "output_names": ["output"],
+                "dynamic_axes": {
+                    "input": {0: "batch_size"},
+                    "output": {0: "batch_size"}
+                }
+            }
         else:
             raise ValueError("EfficientPhys trainer initialized in incorrect toolbox mode!")
 
@@ -137,7 +153,7 @@ class RhythmFormerTrainer(BaseTrainer):
         return np.mean(valid_loss)
 
 
-    def test(self, data_loader):
+    def test_pth(self, data_loader):
         """ Model evaluation on the testing dataset."""
         if data_loader["test"] is None:
             raise ValueError("No data for test")
@@ -176,6 +192,7 @@ class RhythmFormerTrainer(BaseTrainer):
                 batch_size = test_batch[0].shape[0]
                 chunk_len = self.chunk_len
                 data_test, labels_test = test_batch[0].to(self.config.DEVICE), test_batch[1].to(self.config.DEVICE)
+                print(f"Test shape: {data_test.shape}, Labels shape: {labels_test.shape}")
                 pred_ppg_test = self.model(data_test)
                 pred_ppg_test = (pred_ppg_test-torch.mean(pred_ppg_test, axis=-1).view(-1, 1))/torch.std(pred_ppg_test, axis=-1).view(-1, 1)    # normalize
                 labels_test = labels_test.view(-1, 1)
@@ -193,6 +210,37 @@ class RhythmFormerTrainer(BaseTrainer):
             if self.config.TEST.OUTPUT_SAVE_DIR: # saving test outputs
                 self.save_test_outputs(predictions, labels, self.config)
 
+    def test_onnx_batch(self, test_batch, ort_session, predictions, labels):
+        batch_size = test_batch[0].shape[0]
+        chunk_len = self.chunk_len
+        data_test, labels_test = test_batch[0].to(self.config.DEVICE), test_batch[1].to(self.config.DEVICE)
+        
+        # Run ONNX inference
+        ort_inputs = {ort_session.get_inputs()[0].name: data_test.cpu().numpy()}
+        ort_outputs = ort_session.run(None, ort_inputs)
+        pred_ppg_test = torch.from_numpy(ort_outputs[0])
+        
+        pred_ppg_test = (pred_ppg_test-torch.mean(pred_ppg_test, axis=-1).view(-1, 1))/torch.std(pred_ppg_test, axis=-1).view(-1, 1)    # normalize
+        labels_test = labels_test.view(-1, 1)
+        pred_ppg_test = pred_ppg_test.view( -1 , 1)
+        for ib in range(batch_size):
+            subj_index = test_batch[2][ib]
+            sort_index = int(test_batch[3][ib])
+            if subj_index not in predictions.keys():
+                predictions[subj_index] = dict()
+                labels[subj_index] = dict()
+            predictions[subj_index][sort_index] = pred_ppg_test[ib * chunk_len:(ib + 1) * chunk_len]
+            labels[subj_index][sort_index] = labels_test[ib * chunk_len:(ib + 1) * chunk_len]
+            
+    def get_dummy_input(self):
+        return torch.randn(
+            4, # batch size (arbitrary, can be adjusted) 
+            self.config.TEST.DATA.PREPROCESS.CHUNK_LENGTH,
+            3, # channels (RGB)
+            self.config.TEST.DATA.PREPROCESS.RESIZE.H,
+            self.config.TEST.DATA.PREPROCESS.RESIZE.W
+        ).to(self.device)
+    
     def save_model(self, index):
         if not os.path.exists(self.model_dir):
             os.makedirs(self.model_dir)
