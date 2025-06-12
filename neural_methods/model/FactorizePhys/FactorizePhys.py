@@ -202,7 +202,7 @@ class FactorizePhys(nn.Module):
         # else:
         #     x = torch.diff(x, dim=2)
         
-        x = torch.diff(x, dim=2)
+        x = x[:, :, 1:, :, :] - x[:, :, :-1, :, :]
 
         if self.debug:
             print("Input.shape", x.shape)

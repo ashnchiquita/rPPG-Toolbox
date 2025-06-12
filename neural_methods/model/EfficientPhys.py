@@ -94,7 +94,7 @@ class EfficientPhys(nn.Module):
         self.channel = channel
 
     def forward(self, inputs, params=None):
-        inputs = torch.diff(inputs, dim=0)
+        inputs = inputs[1:] - inputs[:-1]
         inputs = self.batch_norm(inputs)
 
         network_input = self.TSM_1(inputs)

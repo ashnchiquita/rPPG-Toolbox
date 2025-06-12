@@ -193,8 +193,12 @@ class video_BRA(nn.Module):
     def forward(self, x:Tensor):
 
         N, C, T, H, W = x.size()
-        t_region = max(4 // self.t_patch , 1)
-        region_size = (t_region, H//4 , W//4)
+        t_region = max(4 // self.t_patch, 1)
+        region_size = (
+            int(t_region),
+            int(H // 4),
+            int(W // 4)
+        )
 
         # STEP 1: linear projection
         q , k , v = self.proj_q(x) , self.proj_k(x) ,self.proj_v(x)

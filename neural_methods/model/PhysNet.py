@@ -88,7 +88,7 @@ class PhysNet_padding_Encoder_Decoder_MAX(nn.Module):
         self.MaxpoolSpaTem = nn.MaxPool3d((2, 2, 2), stride=2)
 
         # self.poolspa = nn.AdaptiveMaxPool3d((frames,1,1))    # pool only spatial space
-        self.poolspa = nn.AdaptiveAvgPool3d((frames, 1, 1))
+        # self.poolspa = nn.AdaptiveAvgPool3d((frames, 1, 1))
 
     def forward(self, x):  # Batch_size*[3, T, 128,128]
         x_visual = x
@@ -116,7 +116,7 @@ class PhysNet_padding_Encoder_Decoder_MAX(nn.Module):
         x = self.upsample2(x)  # x [64, T, 8, 8]
 
         # x [64, T, 1,1]    -->  groundtruth left and right - 7
-        x = self.poolspa(x)
+        x = x.mean(dim=[-2, -1], keepdim=True)
         x = self.ConvBlock10(x)  # x [1, T, 1,1]
 
         rPPG = x.view(-1, length)
