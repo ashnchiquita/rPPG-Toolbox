@@ -148,8 +148,8 @@ if __name__ == "__main__":
 
     # configurations.
     config = get_config(args)
-    print('Configuration:')
-    print(config, end='\n\n')
+    # print('Configuration:')
+    # print(config, end='\n\n')
 
     data_loader_dict = dict() # dictionary of data loaders 
     if config.TOOLBOX_MODE == "train_and_test":
@@ -206,7 +206,7 @@ if __name__ == "__main__":
         elif config.VALID.DATA.DATASET == "MMPD":
             valid_loader = data_loader.MMPDLoader.MMPDLoader
         elif config.VALID.DATA.DATASET == "BP4DPlus":
-            valid_loader = data_loader.BP4DPlusLoader.BP4DPlusLoader
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     valid_loader = data_loader.BP4DPlusLoader.BP4DPlusLoader
         elif config.VALID.DATA.DATASET == "BP4DPlusBigSmall":
             valid_loader = data_loader.BP4DPlusBigSmallLoader.BP4DPlusBigSmallLoader
         elif config.VALID.DATA.DATASET == "UBFC-PHYS":
@@ -313,7 +313,7 @@ if __name__ == "__main__":
             device=config.DEVICE)
         data_loader_dict["unsupervised"] = DataLoader(
             dataset=unsupervised_data,
-            num_workers=16,
+            num_workers=8,
             batch_size=1,
             shuffle=False,
             worker_init_fn=seed_worker,
