@@ -216,7 +216,7 @@ class BaseLoader(Dataset):
         """
         data_dirs_split = self.split_raw_data(data_dirs, begin, end)  # partition dataset 
         # send data directories to be processed
-        file_list_dict = self.multi_process_manager(data_dirs_split, config_preprocess) 
+        file_list_dict = self.multi_process_manager(data_dirs_split, config_preprocess, 2) 
         self.build_file_list(file_list_dict)  # build file list
         self.load_preprocessed_data()  # load all data and corresponding labels (sorted for consistency)
         print("Total Number of raw files preprocessed:", len(data_dirs_split), end='\n\n')
@@ -244,6 +244,9 @@ class BaseLoader(Dataset):
             config_preprocess.CROP_FACE.DETECTION.USE_MEDIAN_FACE_BOX,
             config_preprocess.RESIZE.W,
             config_preprocess.RESIZE.H)
+        
+        print(f"[preprocess] Det Frames DTYPE: {frames.dtype}")
+        
         # Check data transformation type
         data = list()  # Video data
         for data_type in config_preprocess.DATA_TYPE:
@@ -272,6 +275,8 @@ class BaseLoader(Dataset):
         else:
             frames_clips = np.array([data])
             bvps_clips = np.array([bvps])
+            
+        print(f"[preprocess] Final Frames DTYPE: {frames_clips.dtype}")
 
         return frames_clips, bvps_clips
 
@@ -295,8 +300,24 @@ class BaseLoader(Dataset):
             # Computed face_zone(s) are in the form [x_coord, y_coord, width, height]
             # (x,y) corresponds to the top-left corner of the zone to define using
             # the computed width and height.
-            face_zone = detector.detectMultiScale(frame[:, :, :3].astype(np.uint8))
-
+            
+            # base
+            face_zone = detector.detectMultiScale(frame[:, :, :3].astype(np.uint8), scaleFactor=1.05, minNeighbors=7)
+            
+            # PURE: 906, 502, 503, 505
+            # UBFC-rPPG: 14, 20, 32, 46
+            # face_zone = detector.detectMultiScale(frame[:, :, :3].astype(np.uint8), scaleFactor=1.01, minNeighbors=5, maxSize=(200, 200), minSize=(150, 150))
+            
+            # UBFC-rPPG: 46
+            # face_zone = detector.detectMultiScale(frame[:, :, :3].astype(np.uint8), scaleFactor=1.01, minNeighbors=3, maxSize=(200, 200), minSize=(150, 150))
+            
+            # UBFC-rPPG: 1
+            # face_zone = detector.detectMultiScale(frame[:, :, :3].astype(np.uint8), scaleFactor=1.01, minNeighbors=20, maxSize=(200, 200), minSize=(150, 150))
+            
+            # PURE: 504, 506 tapi tdk terselamatkan sih tetap
+            # face_zone = detector.detectMultiScale(frame[:, :, :3].astype(np.uint8), scaleFactor=1.01, minNeighbors=0, maxSize=(190, 190), minSize=(150, 150))
+            
+            
             if len(face_zone) < 1:
                 print("ERROR: No Face Detected")
                 face_box_coor = [0, 0, frame.shape[0], frame.shape[1]]
@@ -308,6 +329,9 @@ class BaseLoader(Dataset):
                 print("Warning: More than one faces are detected. Only cropping the biggest one.")
             else:
                 face_box_coor = face_zone[0]     
+                
+            face_size = (face_box_coor[2], face_box_coor[3])
+            print(f"Detected face size: {face_size}")
         elif "Y5F" in backend:
             # Use a YOLO5Face trained on WiderFace dataset
             # This utilizes both the CPU and GPU
@@ -483,8 +507,9 @@ class BaseLoader(Dataset):
         Returns:
             file_list_dict(Dict): Dictionary containing information regarding processed data ( path names)
         """
-        print('Preprocessing dataset...')
         file_num = len(data_dirs)
+        print(f'Preprocessing dataset of {file_num}...')
+        
         choose_range = range(0, file_num)
         pbar = tqdm(list(choose_range))
 
@@ -506,14 +531,20 @@ class BaseLoader(Dataset):
                     p_list.append(p)
                     running_num += 1
                     process_flag = False
-                for p_ in p_list:
+                for p_ in p_list.copy():  # Use copy() to avoid modification during iteration
                     if not p_.is_alive():
                         p_list.remove(p_)
+                        exit_code = p_.exitcode
+                        if exit_code != 0:
+                            print(f"Process exited with code {exit_code}")
                         p_.join()
                         running_num -= 1
                         pbar.update(1)
         # join all processes
         for p_ in p_list:
+            exit_code = p_.exitcode
+            if exit_code != 0:
+                print(f"Final process exited with code {exit_code}")
             p_.join()
             pbar.update(1)
         pbar.close()
@@ -599,6 +630,7 @@ class BaseLoader(Dataset):
     @staticmethod
     def diff_normalize_data(data):
         """Calculate discrete difference in video data along the time-axis and nornamize by its standard deviation."""
+        print(f"[diff_normalize_data] Data DTYPE: {data.dtype}")
         n, h, w, c = data.shape
         diffnormalized_len = n - 1
         diffnormalized_data = np.zeros((diffnormalized_len, h, w, c), dtype=np.float32)
@@ -606,9 +638,13 @@ class BaseLoader(Dataset):
         for j in range(diffnormalized_len):
             diffnormalized_data[j, :, :, :] = (data[j + 1, :, :, :] - data[j, :, :, :]) / (
                     data[j + 1, :, :, :] + data[j, :, :, :] + 1e-7)
-        diffnormalized_data = diffnormalized_data / np.std(diffnormalized_data)
+            
+        diff_std = np.std(diffnormalized_data)
+        diffnormalized_data = diffnormalized_data / diff_std
         diffnormalized_data = np.append(diffnormalized_data, diffnormalized_data_padding, axis=0)
         diffnormalized_data[np.isnan(diffnormalized_data)] = 0
+        print(f"[diff_normalize_data] Data DTYPE after: {diffnormalized_data.dtype}")
+        print(f"[diff_normalize_data] diff_std: {diff_std}")
         return diffnormalized_data
 
     @staticmethod
@@ -623,9 +659,11 @@ class BaseLoader(Dataset):
     @staticmethod
     def standardized_data(data):
         """Z-score standardization for video data."""
+        print(f"[standardized_data] Data DTYPE before: {data.dtype}")
         data = data - np.mean(data)
         data = data / np.std(data)
         data[np.isnan(data)] = 0
+        print(f"[standardized_data] Data DTYPE after: {data.dtype}")
         return data
 
     @staticmethod

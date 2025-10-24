@@ -46,6 +46,7 @@ class PhysnetTrainer(BaseTrainer):
             model_name = paths[-1].replace('.pth', '')
             parent_dir = '/'.join(paths[:-1])
             self.onnx_path = os.path.join(parent_dir, "onnx", model_name + '.onnx')
+            self.hef_path = os.path.join(parent_dir, "hailo", model_name + '_quantized.hef')
             
             self.onnx_config = {
                 'opset_version': 11,
@@ -193,7 +194,6 @@ class PhysnetTrainer(BaseTrainer):
                 batch_size = test_batch[0].shape[0]
                 data, label = test_batch[0].to(
                     self.config.DEVICE), test_batch[1].to(self.config.DEVICE)
-                print(f"Testing shape: {data.shape}, label shape: {label.shape}")
                 pred_ppg_test, _, _, _ = self.model(data)
 
                 if self.config.TEST.OUTPUT_SAVE_DIR:

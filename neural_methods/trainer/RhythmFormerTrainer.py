@@ -46,6 +46,7 @@ class RhythmFormerTrainer(BaseTrainer):
             model_name = paths[-1].replace('.pth', '')
             parent_dir = '/'.join(paths[:-1])
             self.onnx_path = os.path.join(parent_dir, "onnx", model_name + '.onnx')
+            self.hef_path = os.path.join(parent_dir, "hailo", model_name + '_quantized.hef')
             
             self.onnx_config = {
                 "opset_version": 12,
@@ -192,7 +193,6 @@ class RhythmFormerTrainer(BaseTrainer):
                 batch_size = test_batch[0].shape[0]
                 chunk_len = self.chunk_len
                 data_test, labels_test = test_batch[0].to(self.config.DEVICE), test_batch[1].to(self.config.DEVICE)
-                print(f"Test shape: {data_test.shape}, Labels shape: {labels_test.shape}")
                 pred_ppg_test = self.model(data_test)
                 pred_ppg_test = (pred_ppg_test-torch.mean(pred_ppg_test, axis=-1).view(-1, 1))/torch.std(pred_ppg_test, axis=-1).view(-1, 1)    # normalize
                 labels_test = labels_test.view(-1, 1)

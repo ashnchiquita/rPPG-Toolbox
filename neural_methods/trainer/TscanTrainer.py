@@ -53,6 +53,7 @@ class TscanTrainer(BaseTrainer):
             model_name = paths[-1].replace('.pth', '')
             parent_dir = '/'.join(paths[:-1])
             self.onnx_path = os.path.join(parent_dir, "onnx", model_name + '.onnx')
+            self.hef_path = os.path.join(parent_dir, "hailo", model_name + '_quantized.hef')
             
             self.onnx_config = {
                 "opset_version": 11,
@@ -262,7 +263,7 @@ class TscanTrainer(BaseTrainer):
         
     def get_dummy_input(self):
         return torch.randn(
-            self.base_len, # batch size * frame_depth
+            self.config.NUM_OF_GPU_TRAIN * self.config.TEST.DATA.PREPROCESS.CHUNK_LENGTH, # batch size * frame_depth
             6, # channels
             self.config.TEST.DATA.PREPROCESS.RESIZE.H,
             self.config.TEST.DATA.PREPROCESS.RESIZE.W

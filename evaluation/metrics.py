@@ -4,6 +4,8 @@ import torch
 from evaluation.post_process import *
 from tqdm import tqdm
 from evaluation.BlandAltmanPy import BlandAltman
+import os
+import pickle
 
 def read_label(dataset):
     """Read manually corrected labels."""
@@ -51,6 +53,8 @@ def calculate_metrics(predictions, labels, config):
     SNR_all = list()
     MACC_all = list()
     print("Calculating metrics!")
+    
+    detailed_results = list()
     for index in tqdm(predictions.keys(), ncols=80):
         prediction = _reform_data_from_dict(predictions[index])
         label = _reform_data_from_dict(labels[index])
@@ -63,6 +67,7 @@ def calculate_metrics(predictions, labels, config):
         else:
             window_frame_size = video_frame_size
 
+        chunk_count = 0
         for i in range(0, len(prediction), window_frame_size):
             pred_window = prediction[i:i+window_frame_size]
             label_window = label[i:i+window_frame_size]
@@ -93,8 +98,27 @@ def calculate_metrics(predictions, labels, config):
                 predict_hr_fft_all.append(pred_hr_fft)
                 SNR_all.append(SNR)
                 MACC_all.append(macc)
+                
+                result_entry = {
+                    'subject_id': index,
+                    'sort_index': chunk_count,
+                    'chunk_length': len(pred_window),
+                    'gt_hr_fft': gt_hr_fft,
+                    'pred_hr_fft': pred_hr_fft,
+                    'hr_error_fft': abs(pred_hr_fft - gt_hr_fft),
+                    'hr_error_fft_percent': abs(pred_hr_fft - gt_hr_fft) / gt_hr_fft * 100,
+                    'SNR_fft': SNR,
+                    'MACC_fft': macc,
+                    'diff_flag_used': diff_flag_test,
+                    'fs': config.TEST.DATA.FS
+                }
+                
+                detailed_results.append(result_entry)
+                chunk_count += 1
             else:
                 raise ValueError("Inference evaluation method name wrong!")
+            
+            
     
     # Filename ID to be used in any results files (e.g., Bland-Altman plots) that get saved
     if config.TOOLBOX_MODE == 'train_and_test':
@@ -159,6 +183,48 @@ def calculate_metrics(predictions, labels, config):
                     file_name=f'{filename_id}_FFT_BlandAltman_DifferencePlot.pdf')
             else:
                 raise ValueError("Wrong Test Metric Type")
+        
+        
+        df = pd.DataFrame(detailed_results)
+        
+        # Sort by subject_id and sort_index for easy reading
+        df = df.sort_values(['subject_id', 'sort_index']).reset_index(drop=True)
+        
+        # Determine output directory
+        if config.TEST.OUTPUT_SAVE_DIR:
+            output_dir = config.TEST.OUTPUT_SAVE_DIR
+        else:
+            output_dir = "."
+        
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+            
+        # save predictions result
+        pred_numpy = dict()
+        for subject_key in predictions.keys():
+            pred_numpy[subject_key] = dict()
+            for chunk_key in predictions[subject_key].keys():
+                pred_numpy[subject_key][chunk_key] = predictions[subject_key][chunk_key].cpu().numpy()
+
+        predictions_filename = os.path.join(output_dir, f"{filename_id}_raw_predictions.pkl")
+        with open(predictions_filename, 'wb') as f:
+            pickle.dump(pred_numpy, f)
+        print(f"Raw predictions saved to: {predictions_filename}")
+
+        # Also save a summary with just the key metrics
+        summary_df = df
+        summary_filename = os.path.join(output_dir, f"{filename_id}_hr_summary.csv")
+        summary_df.to_csv(summary_filename, index=False)
+        print(f"HR summary saved to: {summary_filename}")
+        
+        # Print some basic statistics
+        print(f"\nSummary Statistics:")
+        print(f"Total chunks processed: {len(df)}")
+        print(f"Number of subjects: {df['subject_id'].nunique()}")
+        print(f"MAE (FFT HR): {df['hr_error_fft'].mean():.4f} ± {df['hr_error_fft'].std():.4f} bpm")
+        print(f"MAPE (FFT HR): {df['hr_error_fft_percent'].mean():.4f} ± {df['hr_error_fft_percent'].std():.4f}%")
+        print(f"Mean SNR (FFT): {df['SNR_fft'].mean():.4f} ± {df['SNR_fft'].std():.4f} dB")
+        print(f"Mean MACC (FFT): {df['MACC_fft'].mean():.4f} ± {df['MACC_fft'].std():.4f}")
     elif config.INFERENCE.EVALUATION_METHOD == "peak detection":
         gt_hr_peak_all = np.array(gt_hr_peak_all)
         predict_hr_peak_all = np.array(predict_hr_peak_all)

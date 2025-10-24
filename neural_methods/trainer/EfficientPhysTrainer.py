@@ -54,6 +54,7 @@ class EfficientPhysTrainer(BaseTrainer):
             model_name = paths[-1].replace('.pth', '')
             parent_dir = '/'.join(paths[:-1])
             self.onnx_path = os.path.join(parent_dir, "onnx", model_name + '.onnx')
+            self.hef_path = os.path.join(parent_dir, "hailo", model_name + '_quantized.hef')
             
             self.onnx_config = {
                 "opset_version": 11,
@@ -215,7 +216,6 @@ class EfficientPhysTrainer(BaseTrainer):
                 last_frame = torch.unsqueeze(data_test[-1, :, :, :], 0).repeat(self.num_of_gpu, 1, 1, 1)
                 data_test = torch.cat((data_test, last_frame), 0)
                 labels_test = labels_test[:(N * D) // self.base_len * self.base_len]
-                print(f"Testing batch size: {batch_size}, data shape: {data_test.shape}, labels shape: {labels_test.shape}")
                 pred_ppg_test = self.model(data_test)
 
                 if self.config.TEST.OUTPUT_SAVE_DIR:
@@ -268,8 +268,9 @@ class EfficientPhysTrainer(BaseTrainer):
             labels[subj_index][sort_index] = labels_test[idx * self.chunk_len:(idx + 1) * self.chunk_len]
     
     def get_dummy_input(self):
+        print(self.base_len)
         dummy_input = torch.randn(
-            self.base_len,
+            self.num_of_gpu * self.config.TEST.DATA.PREPROCESS.CHUNK_LENGTH,
             3,
             self.config.TEST.DATA.PREPROCESS.RESIZE.H,
             self.config.TEST.DATA.PREPROCESS.RESIZE.W

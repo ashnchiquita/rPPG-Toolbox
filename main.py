@@ -88,7 +88,32 @@ def train_and_test(config, data_loader_dict):
     model_trainer.train(data_loader_dict)
     model_trainer.test(data_loader_dict)
 
-
+def test_input_compatibility(config):
+    data_loader_dict = dict()  # dictionary of data loaders
+    if config.MODEL.NAME == "Physnet":
+        model_trainer = trainer.PhysnetTrainer.PhysnetTrainer(config, data_loader_dict)
+    elif config.MODEL.NAME == "iBVPNet":
+        model_trainer = trainer.iBVPNetTrainer.iBVPNetTrainer(config, data_loader_dict)    
+    elif config.MODEL.NAME == "FactorizePhys":
+        model_trainer = trainer.FactorizePhysTrainer.FactorizePhysTrainer(config, data_loader_dict)
+    elif config.MODEL.NAME == "Tscan":
+        model_trainer = trainer.TscanTrainer.TscanTrainer(config, data_loader_dict)
+    elif config.MODEL.NAME == "EfficientPhys":
+        model_trainer = trainer.EfficientPhysTrainer.EfficientPhysTrainer(config, data_loader_dict)
+    elif config.MODEL.NAME == 'DeepPhys':
+        model_trainer = trainer.DeepPhysTrainer.DeepPhysTrainer(config, data_loader_dict)
+    elif config.MODEL.NAME == 'BigSmall':
+        model_trainer = trainer.BigSmallTrainer.BigSmallTrainer(config, data_loader_dict)
+    elif config.MODEL.NAME == 'PhysFormer':
+        model_trainer = trainer.PhysFormerTrainer.PhysFormerTrainer(config, data_loader_dict)
+    elif config.MODEL.NAME == 'PhysMamba':
+        model_trainer = trainer.PhysMambaTrainer.PhysMambaTrainer(config, data_loader_dict)
+    elif config.MODEL.NAME == 'RhythmFormer':
+        model_trainer = trainer.RhythmFormerTrainer.RhythmFormerTrainer(config, data_loader_dict)
+    else:
+        raise ValueError('Your Model is Not Supported  Yet!')
+    model_trainer.test_input_compatibility()
+    
 def test(config, data_loader_dict):
     """Tests the model."""
     if config.MODEL.NAME == "Physnet":
@@ -206,7 +231,7 @@ if __name__ == "__main__":
         elif config.VALID.DATA.DATASET == "MMPD":
             valid_loader = data_loader.MMPDLoader.MMPDLoader
         elif config.VALID.DATA.DATASET == "BP4DPlus":
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     valid_loader = data_loader.BP4DPlusLoader.BP4DPlusLoader
+            valid_loader = data_loader.BP4DPlusLoader.BP4DPlusLoader
         elif config.VALID.DATA.DATASET == "BP4DPlusBigSmall":
             valid_loader = data_loader.BP4DPlusBigSmallLoader.BP4DPlusBigSmallLoader
         elif config.VALID.DATA.DATASET == "UBFC-PHYS":
@@ -327,6 +352,7 @@ if __name__ == "__main__":
         train_and_test(config, data_loader_dict)
     elif config.TOOLBOX_MODE == "only_test":
         test(config, data_loader_dict)
+        # test_input_compatibility(config)
     elif config.TOOLBOX_MODE == "unsupervised_method":
         unsupervised_method_inference(config, data_loader_dict)
     else:

@@ -5,6 +5,7 @@ import os
 from collections import OrderedDict
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.optim as optim
 from evaluation.metrics import calculate_metrics
@@ -49,6 +50,7 @@ class DeepPhysTrainer(BaseTrainer):
             model_name = paths[-1].replace('.pth', '')
             parent_dir = '/'.join(paths[:-1])
             self.onnx_path = os.path.join(parent_dir, "onnx", model_name + '.onnx')
+            self.hef_path = os.path.join(parent_dir, "hailo", model_name + '_quantized.hef')
             
             self.onnx_config = {
                 "opset_version": 11,
@@ -194,7 +196,6 @@ class DeepPhysTrainer(BaseTrainer):
                     self.config.DEVICE), test_batch[1].to(self.config.DEVICE)
                 N, D, C, H, W = data_test.shape
                 data_test = data_test.view(N * D, C, H, W)
-                print(f"Testing batch size: {batch_size}, data shape: {data_test.shape}")
                 labels_test = labels_test.view(-1, 1)
                 pred_ppg_test = self.model(data_test)
 
@@ -209,8 +210,7 @@ class DeepPhysTrainer(BaseTrainer):
                         predictions[subj_index] = dict()
                         labels[subj_index] = dict()
                     predictions[subj_index][sort_index] = pred_ppg_test[idx * self.chunk_len:(idx + 1) * self.chunk_len]
-                    labels[subj_index][sort_index] = labels_test[idx * self.chunk_len:(idx + 1) * self.chunk_len]
-        
+                    labels[subj_index][sort_index] = labels_test[idx * self.chunk_len:(idx + 1) * self.chunk_len]  
         print('')
         calculate_metrics(predictions, labels, self.config)
         if self.config.TEST.OUTPUT_SAVE_DIR: # saving test outputs
@@ -244,7 +244,7 @@ class DeepPhysTrainer(BaseTrainer):
             
     def get_dummy_input(self):
         return torch.randn(
-            720, # batch size * frame_depth (arbitrary)
+            self.config.NUM_OF_GPU_TRAIN * self.config.TEST.DATA.PREPROCESS.CHUNK_LENGTH,  # batch size * chunk length
             6, # channels
             self.config.TEST.DATA.PREPROCESS.RESIZE.H,
             self.config.TEST.DATA.PREPROCESS.RESIZE.W

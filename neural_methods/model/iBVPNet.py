@@ -131,7 +131,7 @@ class iBVPNet(nn.Module):
         
         [batch, channel, length, width, height] = x.shape
 
-        x = torch.diff(x, dim=2)
+        x = x[:, :, 1:, :, :] - x[:, :, :-1, :, :]
 
         if self.debug:
             print("Input.shape", x.shape)

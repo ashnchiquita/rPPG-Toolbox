@@ -32,7 +32,7 @@ def power2db(mag):
     """Convert power to db."""
     return 10 * np.log10(mag)
 
-def _calculate_fft_hr(ppg_signal, fs=60, low_pass=0.6, high_pass=3.3):
+def _calculate_fft_hr(ppg_signal, fs=60, low_pass=0.75, high_pass=2.5):
     # Note: to more closely match results in the NeurIPS 2023 toolbox paper,
     # we recommend low_pass=0.75 and high_pass=2.5 instead of the defaults above.
     """Calculate heart rate based on PPG using Fast Fourier transform (FFT)."""
@@ -75,7 +75,7 @@ def _compute_macc(pred_signal, gt_signal):
     macc = max(tlcc_list)
     return macc
 
-def _calculate_SNR(pred_ppg_signal, hr_label, fs=30, low_pass=0.6, high_pass=3.3):
+def _calculate_SNR(pred_ppg_signal, hr_label, fs=30, low_pass=0.75, high_pass=2.5):
     """Calculate SNR as the ratio of the area under the curve of the frequency spectrum around the first and second harmonics 
         of the ground truth HR frequency to the area under the curve of the remainder of the frequency spectrum, from 0.6 Hz
         to 3.3 Hz. 
@@ -145,7 +145,7 @@ def calculate_metric_per_video(predictions, labels, fs=30, diff_flag=True, use_b
         # Note: to more closely match results in the NeurIPS 2023 toolbox paper,
         # we recommend using 0.75 in place of 0.6 and 2.5 in place of 3.3 in the 
         # below line.
-        [b, a] = butter(1, [0.6 / fs * 2, 3.3 / fs * 2], btype='bandpass')
+        [b, a] = butter(1, [0.75 / fs * 2, 2.5 / fs * 2], btype='bandpass')
         predictions = scipy.signal.filtfilt(b, a, np.double(predictions))
         labels = scipy.signal.filtfilt(b, a, np.double(labels))
     

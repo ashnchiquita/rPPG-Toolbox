@@ -4,10 +4,13 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import ScalarFormatter, MaxNLocator
 import os
 import pickle
+import numpy as np
+import pandas as pd
 import onnx
 import onnxruntime as ort
 from tqdm import tqdm
-from evaluation.metrics import calculate_metrics
+from evaluation.metrics import calculate_metrics, _reform_data_from_dict
+from evaluation.post_process import calculate_metric_per_video
 
 class BaseTrainer:
     @staticmethod
@@ -76,11 +79,47 @@ class BaseTrainer:
         calculate_metrics(predictions, labels, self.config)
     
     def test(self, data_loader):
-        # self.test_pth(data_loader)
-        self.test_onnx(data_loader)
+        self.test_pth(data_loader)
+        # self.test_onnx(data_loader)
     
     def get_dummy_input(self):
         raise NotImplementedError("get_dummy_input method must be implemented in the subclass")
+    
+    def test_input_compatibility(self):
+        model_path = self.config.INFERENCE.MODEL_PATH
+        
+        if model_path and os.path.exists(model_path):
+            print(f"Loading model weights from: {model_path}")
+            self.model.load_state_dict(torch.load(model_path, map_location=self.device), strict=False)
+            self.model.eval()
+        else:
+            raise ValueError(f"Model file not found: {model_path}")  
+        
+        print(f"==== Model {model_path} input compatibility test ====") 
+        
+        dummy_input = self.get_dummy_input()
+        if isinstance(dummy_input, torch.Tensor):
+            print(f"Dummy input shape: {dummy_input.shape}")
+        elif isinstance(dummy_input, (list, tuple)):
+            print(f"Dummy input shapes: {[x.shape for x in dummy_input if isinstance(x, torch.Tensor)]}")
+            
+        # Check input compatibility
+        with torch.no_grad():
+            try:
+                if isinstance(dummy_input, (list, tuple)):
+                    output = self.model(*dummy_input)
+                else:
+                    output = self.model(dummy_input)
+                print("Model input is compatible with dummy input.")
+                
+                if isinstance(output, (list, tuple)):
+                    print(f"Model output shapes: {[x.shape for x in output if isinstance(x, torch.Tensor)]}")
+                elif isinstance(output, torch.Tensor):
+                    print(f"Model output shape: {output.shape}")
+                else:
+                    print("Model output is not a tensor or a list/tuple of tensors.")
+            except Exception as e:
+                raise ValueError(f"Model input is not compatible with dummy input: {e}")
         
     def export_to_onnx(self):
         """Export the trained model to ONNX format."""
@@ -100,6 +139,23 @@ class BaseTrainer:
             print(f"Dummy input shapes: {[x.shape for x in dummy_input if isinstance(x, torch.Tensor)]}")
 
         model_to_export = self.model.module if isinstance(self.model, torch.nn.DataParallel) else self.model
+        
+        # check model
+        try:
+            with torch.no_grad():
+                if isinstance(dummy_input, (list, tuple)):
+                    output = model_to_export(*dummy_input)
+                else:
+                    output = model_to_export(dummy_input)
+            print("Model is compatible with dummy input.")
+            if isinstance(output, (list, tuple)):
+                print(f"Model output shapes: {[x.shape for x in output if isinstance(x, torch.Tensor)]}")
+            elif isinstance(output, torch.Tensor):
+                print(f"Model output shape: {output.shape}")
+            else:
+                print("Model output is not a tensor or a list/tuple of tensors.")
+        except Exception as e:
+            raise ValueError(f"Model is not compatible with dummy input: {e}")
         
         # Export to ONNX
         torch.onnx.export(

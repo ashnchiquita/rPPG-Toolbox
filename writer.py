@@ -7,7 +7,7 @@ def natural_sort_key(s):
     return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', s)]
 
 def write_naturally_sorted_csv(output_csv='output.csv'):
-    current_dir = '/mnt/d/dataset/PURE/cache/PURE_SizeW72_SizeH72_ClipLength180_DataTypeRaw_DataAugNone_LabelTypeRaw_Crop_faceTrue_BackendHC_Large_boxTrue_Large_size1.5_Dyamic_DetTrue_det_len30_Median_face_boxFalse_unsupervised'
+    current_dir = '/mnt/c/dataset/UBFC-rPPG/cache/UBFC-rPPG_SizeW72_SizeH72_ClipLength180_DataTypeRaw_DataAugNone_LabelTypeRaw_Crop_faceTrue_BackendHC_Large_boxFalse_Large_size1.5_Dyamic_DetTrue_det_len30_Median_face_boxFalse_unsupervised'
     file_info = []
 
     for root, _, files in os.walk(current_dir):

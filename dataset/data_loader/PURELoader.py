@@ -47,12 +47,16 @@ class PURELoader(BaseLoader):
     def get_raw_data(self, data_path):
         """Returns data directories under the path(For PURE dataset)."""
 
+        # whitelist = set(['0504', '0506'])
         data_dirs = glob.glob(data_path + os.sep + "*-*")
         if not data_dirs:
             raise ValueError(self.dataset_name + " data paths empty!")
         dirs = list()
         for data_dir in data_dirs:
             subject_trail_val = os.path.split(data_dir)[-1].replace('-', '')
+            # if subject_trail_val not in whitelist:
+            #     # Skip directories that are not in the whitelist
+            #     continue
             index = int(subject_trail_val)
             subject = int(subject_trail_val[0:2])
             dirs.append({"index": index, "path": data_dir, "subject": subject})
@@ -132,8 +136,11 @@ class PURELoader(BaseLoader):
         """Reads a video file, returns frames(T, H, W, 3) """
         frames = list()
         all_png = sorted(glob.glob(video_file + '*.png'))
-        for png_path in all_png:
+        for png_path in tqdm(all_png, desc="Reading video frames"):
             img = cv2.imread(png_path)
+            if img is None:
+                print(f"Error reading {png_path}, skipping this frame.")
+                continue
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             frames.append(img)
         return np.asarray(frames)

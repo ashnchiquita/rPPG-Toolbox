@@ -77,6 +77,7 @@ class PhysFormerTrainer(BaseTrainer):
             model_name = paths[-1].replace('.pth', '')
             parent_dir = '/'.join(paths[:-1])
             self.onnx_path = os.path.join(parent_dir, "onnx", model_name + '.onnx')
+            self.hef_path = os.path.join(parent_dir, "hailo", model_name + '_quantized.hef')
             
             self.onnx_config = {
                 "opset_version": 11,
@@ -263,7 +264,6 @@ class PhysFormerTrainer(BaseTrainer):
                 data, label = test_batch[0].to(
                     self.config.DEVICE), test_batch[1].to(self.config.DEVICE)
                 gra_sharp = 2.0
-                print(f"Processing batch size: {batch_size}, data shape: {data.shape}, label shape: {label.shape}")
                 pred_ppg_test, _, _, _ = self.model(data, gra_sharp)
                 for idx in range(batch_size):
                     subj_index = test_batch[2][idx]

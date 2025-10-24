@@ -55,6 +55,7 @@ class PhysMambaTrainer(BaseTrainer):
             model_name = paths[-1].replace('.pth', '')
             parent_dir = '/'.join(paths[:-1])
             self.onnx_path = os.path.join(parent_dir, "onnx", model_name + '.onnx')
+            self.hef_path = os.path.join(parent_dir, "hailo", model_name + '_quantized.hef')
             
             self.onnx_config = {
                 "opset_version": 11,
@@ -191,7 +192,6 @@ class PhysMambaTrainer(BaseTrainer):
                 data, label = test_batch[0].to(
                     self.config.DEVICE), test_batch[1].to(self.config.DEVICE)
                 
-                print(f"Test batch size: {batch_size}, Data shape: {data.shape}, Label shape: {label.shape}")
                 pred_ppg_test = self.model(data)
 
                 if self.config.TEST.OUTPUT_SAVE_DIR:
@@ -209,6 +209,7 @@ class PhysMambaTrainer(BaseTrainer):
 
         print('')
         calculate_metrics(predictions, labels, self.config)
+
         if self.config.TEST.OUTPUT_SAVE_DIR: # saving test outputs 
             self.save_test_outputs(predictions, labels, self.config)
 

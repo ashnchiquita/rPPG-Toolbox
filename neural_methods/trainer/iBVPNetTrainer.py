@@ -43,6 +43,21 @@ class iBVPNetTrainer(BaseTrainer):
             self.scheduler = torch.optim.lr_scheduler.OneCycleLR(
                 self.optimizer, max_lr=config.TRAIN.LR, epochs=config.TRAIN.EPOCHS, steps_per_epoch=self.num_train_batches)
         elif config.TOOLBOX_MODE == "only_test":
+            model_path = config.INFERENCE.MODEL_PATH
+            paths = model_path.split('/')
+            model_name = paths[-1].replace('.pth', '')
+            parent_dir = '/'.join(paths[:-1])
+            self.onnx_path = os.path.join(parent_dir, "onnx", model_name + '.onnx')
+            
+            self.onnx_config = {
+                "opset_version": 11,
+                "input_names": ["input"],
+                "output_names": ["output"],
+                "dynamic_axes": {
+                    "input": {0: "batch_size"},
+                    "output": {0: "batch_size"}
+                }
+            }
             pass
         else:
             raise ValueError("iBVPNet trainer initialized in incorrect toolbox mode!")
@@ -209,8 +224,52 @@ class iBVPNetTrainer(BaseTrainer):
 
         print('')
         calculate_metrics(predictions, labels, self.config)
+
         if self.config.TEST.OUTPUT_SAVE_DIR: # saving test outputs 
             self.save_test_outputs(predictions, labels, self.config)
+
+    def test_onnx_batch(self, test_batch, ort_session, predictions, labels):
+        batch_size = test_batch[0].shape[0]
+
+        data = test_batch[0].to(self.device)
+        BVP_label = test_batch[1].to(self.device)
+
+        last_frame = torch.unsqueeze(
+            data[:, :, -1, :, :], 2).repeat(1, 1, max(self.num_of_gpu, 1), 1, 1)
+        data = torch.cat((data, last_frame), 2)
+        
+        # Run ONNX inference
+        ort_inputs = {ort_session.get_inputs()[0].name: data.cpu().numpy()}
+        ort_outputs = ort_session.run(None, ort_inputs)
+        pred_ppg_test = torch.from_numpy(ort_outputs[0])
+
+        if self.config.TEST.OUTPUT_SAVE_DIR:
+            BVP_label = BVP_label.cpu()
+            pred_ppg_test = pred_ppg_test.cpu()
+
+        for idx in range(batch_size):
+            subj_index = test_batch[2][idx]
+            sort_index = int(test_batch[3][idx])
+            if subj_index not in predictions.keys():
+                predictions[subj_index] = dict()
+                labels[subj_index] = dict()
+            predictions[subj_index][sort_index] = pred_ppg_test[idx]
+            labels[subj_index][sort_index] = BVP_label[idx]
+        
+    def get_dummy_input(self):
+        dummy_input = torch.randn(
+            self.num_of_gpu, # batch size (arbitrary, can be adjusted) 
+            3, # channels (RGB)
+            self.config.TEST.DATA.PREPROCESS.CHUNK_LENGTH,
+            self.config.TEST.DATA.PREPROCESS.RESIZE.H,
+            self.config.TEST.DATA.PREPROCESS.RESIZE.W
+        ).to(self.device)
+
+        last_frame = torch.unsqueeze(
+            dummy_input[:, :, -1, :, :], 2).repeat(1, 1, max(self.num_of_gpu, 1), 1, 1)
+        dummy_input = torch.cat((dummy_input, last_frame), 2)
+        
+        return dummy_input
 
     def save_model(self, index):
         if not os.path.exists(self.model_dir):
